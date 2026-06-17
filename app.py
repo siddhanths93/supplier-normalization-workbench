@@ -79,6 +79,11 @@ def apply_styles():
             font-size: 1.55rem;
             font-weight: 800;
         }
+
+        div[data-testid="stMetricLabel"] {
+            color: #475569;
+            font-weight: 600;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -184,10 +189,14 @@ KNOWN_ALIASES = {
 }
 
 
+# ============================================================
+# CORE CLEANING FUNCTIONS
+# ============================================================
+
 def clean_supplier_name(name):
     """
-    Standardizes supplier names before matching.
-    This does not create the final name; it creates the comparison string.
+    Creates a simplified comparison string for supplier matching.
+    This is not the final display name.
     """
     if pd.isna(name):
         return ""
@@ -208,8 +217,7 @@ def alias_lookup(name):
 
 def choose_canonical_name(original_names, spend_lookup):
     """
-    Chooses the canonical display name for a fuzzy group.
-    For non-alias fuzzy groups, use the highest-spend variant.
+    For fuzzy-only groups, select the highest-spend supplier variant as the canonical name.
     """
     valid_names = [str(name).strip() for name in original_names if str(name).strip()]
 
@@ -238,6 +246,10 @@ def confidence_band(score, method):
 
 
 def false_positive_risk(score, variant_count, category_conflict=False, country_conflict=False):
+    """
+    Basic false-positive risk flag.
+    Category and country conflicts increase review risk.
+    """
     risk = "Low"
 
     if score < 90:
@@ -370,7 +382,7 @@ def normalize_suppliers(
 
     unresolved = []
 
-    # Step 1: alias matching
+    # Step 1: known alias matching
     for supplier in original_suppliers:
         alias = alias_lookup(supplier)
 
@@ -382,7 +394,7 @@ def normalize_suppliers(
         else:
             unresolved.append(supplier)
 
-    # Step 2: fuzzy matching among unresolved suppliers
+    # Step 2: fuzzy matching among unresolved names
     cleaned_to_originals = defaultdict(list)
 
     for supplier in unresolved:
@@ -427,6 +439,7 @@ def normalize_suppliers(
         for supplier in original_group:
             mapping[supplier] = canonical
             scores[supplier] = avg_score
+
             if len(original_group) > 1:
                 methods[supplier] = "Fuzzy match"
                 reason_codes[supplier] = "FUZZY_NAME_MATCH"
@@ -443,7 +456,7 @@ def normalize_suppliers(
         axis=1,
     )
 
-    # Build group-level summary
+    # Group-level summary
     group_rows = []
 
     for normalized_name, group_df in data.groupby("normalized_supplier_name", dropna=False):
@@ -528,7 +541,10 @@ def build_golden_records(normalized_data):
                 "best_country": best_country,
                 "variant_count": len(variants),
                 "total_spend": group_df["spend_value"].sum(),
-                "survivorship_logic": "Name from normalized family; category/country selected by most frequent value; spend aggregated across variants.",
+                "survivorship_logic": (
+                    "Name from normalized family; category/country selected by most frequent value; "
+                    "spend aggregated across variants."
+                ),
                 "review_required": "Yes" if len(variants) > 1 else "No",
             }
         )
@@ -545,22 +561,39 @@ def build_golden_records(normalized_data):
 # DATA QUALITY SCORE
 # ============================================================
 
-def calculate_data_quality(df, normalized_data, group_summary, supplier_col, spend_col=None, category_col=None, country_col=None):
-    total_records = len(df)
-
+def calculate_data_quality(
+    df,
+    group_summary,
+    supplier_col,
+    spend_col=None,
+    category_col=None,
+    country_col=None,
+):
     supplier_completeness = df[supplier_col].notna().mean() * 100 if supplier_col in df.columns else 0
 
     if spend_col and spend_col in df.columns:
         spend_numeric = pd.to_numeric(
-            df[spend_col].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False),
+            df[spend_col]
+            .astype(str)
+            .str.replace("$", "", regex=False)
+            .str.replace(",", "", regex=False),
             errors="coerce",
         )
         spend_usability = spend_numeric.notna().mean() * 100
     else:
         spend_usability = 0
 
-    category_completeness = df[category_col].notna().mean() * 100 if category_col and category_col in df.columns else 0
-    country_completeness = df[country_col].notna().mean() * 100 if country_col and country_col in df.columns else 0
+    category_completeness = (
+        df[category_col].notna().mean() * 100
+        if category_col and category_col in df.columns
+        else 0
+    )
+
+    country_completeness = (
+        df[country_col].notna().mean() * 100
+        if country_col and country_col in df.columns
+        else 0
+    )
 
     duplicate_groups = int((group_summary["variant_count"] > 1).sum()) if not group_summary.empty else 0
     review_groups = int((group_summary["review_status"] == "Needs Review").sum()) if not group_summary.empty else 0
@@ -584,12 +617,12 @@ def calculate_data_quality(df, normalized_data, group_summary, supplier_col, spe
         "dimensions": pd.DataFrame(dimensions, columns=["dimension", "score"]),
         "duplicate_groups": duplicate_groups,
         "review_groups": review_groups,
-        "total_records": total_records,
+        "total_records": len(df),
     }
 
 
 # ============================================================
-# RENDER APP
+# MAIN APP
 # ============================================================
 
 def main():
@@ -598,17 +631,21 @@ def main():
     st.markdown(
         """
         <div class="hero-card">
-            <div class="hero-label">Procurement Data Quality Accelerator</div>
+            <div class="hero-label">Sid's Portfolio - Procurement Data Quality Accelerator</div>
             <div class="hero-title">Supplier Normalization & Duplicate Detection Workbench</div>
             <div class="hero-subtitle">
                 Upload messy supplier data, detect duplicate vendor records, normalize supplier families,
-                generate a review queue, build golden record recommendations, and export a cleaner supplier
-                master for spend analytics.
+                generate a human review queue, build golden record recommendations, and export cleaner supplier
+                data for downstream spend analytics.
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # ========================================================
+    # SIDEBAR: INPUT
+    # ========================================================
 
     st.sidebar.header("Data Input")
 
@@ -636,26 +673,55 @@ def main():
             st.error(f"Could not load file: {e}")
             return
 
+    if raw_df is None or raw_df.empty:
+        st.warning("No data available.")
+        return
+
+    # ========================================================
+    # SIDEBAR: COLUMN MAPPING
+    # ========================================================
+
     st.sidebar.header("Column Mapping")
 
     columns = list(raw_df.columns)
 
     default_supplier = columns.index("supplier_name") if "supplier_name" in columns else 0
-    supplier_col = st.sidebar.selectbox("Supplier name column", columns, index=default_supplier)
+
+    supplier_col = st.sidebar.selectbox(
+        "Supplier name column",
+        columns,
+        index=default_supplier,
+    )
 
     optional_columns = ["None"] + columns
 
     spend_default = optional_columns.index("spend") if "spend" in optional_columns else 0
-    spend_col = st.sidebar.selectbox("Spend column optional", optional_columns, index=spend_default)
+    spend_col = st.sidebar.selectbox(
+        "Spend column optional",
+        optional_columns,
+        index=spend_default,
+    )
     spend_col = None if spend_col == "None" else spend_col
 
     category_default = optional_columns.index("category") if "category" in optional_columns else 0
-    category_col = st.sidebar.selectbox("Category column optional", optional_columns, index=category_default)
+    category_col = st.sidebar.selectbox(
+        "Category column optional",
+        optional_columns,
+        index=category_default,
+    )
     category_col = None if category_col == "None" else category_col
 
     country_default = optional_columns.index("country") if "country" in optional_columns else 0
-    country_col = st.sidebar.selectbox("Country column optional", optional_columns, index=country_default)
+    country_col = st.sidebar.selectbox(
+        "Country column optional",
+        optional_columns,
+        index=country_default,
+    )
     country_col = None if country_col == "None" else country_col
+
+    # ========================================================
+    # SIDEBAR: MATCH SETTINGS
+    # ========================================================
 
     st.sidebar.header("Matching Settings")
 
@@ -683,6 +749,10 @@ def main():
         "Higher threshold reduces false positives. Lower threshold finds more possible duplicates but increases review burden."
     )
 
+    # ========================================================
+    # RUN DIAGNOSTIC
+    # ========================================================
+
     normalized_data, group_summary = normalize_suppliers(
         raw_df,
         supplier_col=supplier_col,
@@ -696,8 +766,7 @@ def main():
 
     data_quality = calculate_data_quality(
         raw_df,
-        normalized_data,
-        group_summary,
+        group_summary=group_summary,
         supplier_col=supplier_col,
         spend_col=spend_col,
         category_col=category_col,
@@ -713,16 +782,21 @@ def main():
     if not group_summary.empty:
         spend_affected = group_summary[group_summary["variant_count"] > 1]["total_spend"].sum()
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    # ========================================================
+    # TABS
+    # ========================================================
+
+    tab1, tab2, tab3 = st.tabs(
         [
             "Executive Summary",
-            "Match Groups",
-            "Review Queue",
-            "Golden Records",
-            "Normalized Data",
-            "Export & Methodology",
+            "Match Review",
+            "Output & Methodology",
         ]
     )
+
+    # ========================================================
+    # TAB 1: EXECUTIVE SUMMARY
+    # ========================================================
 
     with tab1:
         st.subheader("Executive Data Quality Summary")
@@ -747,89 +821,154 @@ def main():
             unsafe_allow_html=True,
         )
 
-        st.markdown("### Data Quality Dimensions")
-        quality_display = data_quality["dimensions"].copy()
-        quality_display["score"] = quality_display["score"].round(1)
-        st.dataframe(clean_display_columns(quality_display), use_container_width=True, hide_index=True)
-
         st.markdown("### Before / After Impact")
+
         impact = pd.DataFrame(
             [
-                {"metric": "Unique supplier names", "before": before_supplier_count, "after": after_supplier_count},
-                {"metric": "Potential duplicate groups", "before": "Not available", "after": duplicate_groups},
-                {"metric": "Groups requiring review", "before": "Not available", "after": review_groups},
-                {"metric": "Spend affected by duplicate groups", "before": "Not available", "after": format_currency(spend_affected)},
+                {
+                    "metric": "Unique supplier names",
+                    "before": before_supplier_count,
+                    "after": after_supplier_count,
+                },
+                {
+                    "metric": "Potential duplicate groups",
+                    "before": "Not available",
+                    "after": duplicate_groups,
+                },
+                {
+                    "metric": "Groups requiring review",
+                    "before": "Not available",
+                    "after": review_groups,
+                },
+                {
+                    "metric": "Spend affected by duplicate groups",
+                    "before": "Not available",
+                    "after": format_currency(spend_affected),
+                },
             ]
         )
-        st.dataframe(clean_display_columns(impact), use_container_width=True, hide_index=True)
+
+        st.dataframe(
+            clean_display_columns(impact),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("### Data Quality Dimensions")
+
+        quality_display = data_quality["dimensions"].copy()
+        quality_display["score"] = quality_display["score"].round(1)
+
+        st.dataframe(
+            clean_display_columns(quality_display),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("### Executive Takeaway")
+
+        if duplicate_groups > 0:
+            st.markdown(
+                f"""
+                The supplier file has a meaningful normalization opportunity. The tool detected **{duplicate_groups}**
+                potential duplicate supplier groups and **{review_groups}** groups requiring manual review.
+                Cleaning these records can improve supplier visibility, spend concentration analysis, category strategy,
+                and downstream sourcing opportunity identification.
+                """
+            )
+        else:
+            st.markdown(
+                """
+                The supplier file appears relatively clean from a duplicate-name perspective based on the current
+                matching threshold. Consider lowering the threshold or using aggressive mode if the goal is broader
+                duplicate discovery.
+                """
+            )
+
+    # ========================================================
+    # TAB 2: MATCH REVIEW
+    # ========================================================
 
     with tab2:
-        st.subheader("Supplier Match Groups")
+        st.subheader("Supplier Match Review")
 
         st.markdown(
             """
-            This tab shows how messy supplier names were grouped into normalized supplier families.
-            Groups marked as **Needs Review** should not be automatically merged without human validation.
+            This section shows proposed supplier-family groupings, highlights records requiring human review,
+            and recommends golden supplier records. Groups marked as **Needs Review** should not be automatically
+            merged without validation.
             """
         )
-
-        display = group_summary.copy()
-        if not display.empty and "total_spend" in display.columns:
-            display["total_spend"] = display["total_spend"].apply(format_currency)
-
-        st.dataframe(clean_display_columns(display), use_container_width=True, hide_index=True)
-
-    with tab3:
-        st.subheader("Human Review Queue")
 
         review_queue = group_summary[
             (group_summary["review_status"] == "Needs Review")
             | (group_summary["false_positive_risk"] == "High")
         ].copy()
 
+        review_cols = st.columns(4)
+        review_cols[0].metric("Total Match Groups", format_number(len(group_summary)))
+        review_cols[1].metric("Duplicate Groups", format_number(duplicate_groups))
+        review_cols[2].metric("Needs Review", format_number(len(review_queue)))
+        review_cols[3].metric("Spend Affected", format_currency(spend_affected))
+
+        st.markdown("### Match Groups")
+
+        display_groups = group_summary.copy()
+
+        if not display_groups.empty and "total_spend" in display_groups.columns:
+            display_groups["total_spend"] = display_groups["total_spend"].apply(format_currency)
+
+        st.dataframe(
+            clean_display_columns(display_groups),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("### Human Review Queue")
+
         if review_queue.empty:
             st.success("No high-risk match groups require manual review.")
         else:
-            display = review_queue.copy()
-            display["total_spend"] = display["total_spend"].apply(format_currency)
-            st.dataframe(clean_display_columns(display), use_container_width=True, hide_index=True)
+            display_review = review_queue.copy()
 
-        st.markdown("### Why Human Review Matters")
+            if "total_spend" in display_review.columns:
+                display_review["total_spend"] = display_review["total_spend"].apply(format_currency)
+
+            st.dataframe(
+                clean_display_columns(display_review),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.markdown("### Golden Record Recommendations")
+
+        display_golden = golden_records.copy()
+
+        if not display_golden.empty and "total_spend" in display_golden.columns:
+            display_golden["total_spend"] = display_golden["total_spend"].apply(format_currency)
+
+        st.dataframe(
+            clean_display_columns(display_golden),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # ========================================================
+    # TAB 3: OUTPUT & METHODOLOGY
+    # ========================================================
+
+    with tab3:
+        st.subheader("Output & Methodology")
+
         st.markdown(
             """
-            Supplier standardization should not blindly merge every similar name. Similar supplier names may represent
-            different legal entities, business units, categories, countries, or buying relationships. This review queue
-            helps reduce false positives before downstream spend analytics or sourcing decisions.
+            This section provides the normalized supplier-level output, export files, and methodology notes.
+            The normalized output can be used as a cleaner supplier master input for downstream spend analytics,
+            sourcing opportunity analysis, or vendor-master cleanup review.
             """
         )
 
-    with tab4:
-        st.subheader("Golden Record Recommendations")
-
-        st.markdown(
-            """
-            Golden records represent the recommended supplier-family view after normalization.
-            In a full supplier master data program, these records would be reviewed and approved before updating ERP or vendor-master data.
-            """
-        )
-
-        display = golden_records.copy()
-        if not display.empty and "total_spend" in display.columns:
-            display["total_spend"] = display["total_spend"].apply(format_currency)
-
-        st.dataframe(clean_display_columns(display), use_container_width=True, hide_index=True)
-
-    with tab5:
-        st.subheader("Normalized Supplier-Level Data")
-
-        display = normalized_data.copy()
-        if "spend_value" in display.columns:
-            display["spend_value"] = display["spend_value"].apply(format_currency)
-
-        st.dataframe(clean_display_columns(display), use_container_width=True, hide_index=True)
-
-    with tab6:
-        st.subheader("Export & Methodology")
+        st.markdown("### Download Outputs")
 
         normalized_export = normalized_data.to_csv(index=False).encode("utf-8")
         mapping_export = group_summary.to_csv(index=False).encode("utf-8")
@@ -858,7 +997,28 @@ def main():
             mime="text/csv",
         )
 
+        st.markdown("### Normalized Supplier-Level Data")
+
+        st.markdown(
+            """
+            This is the row-level output with original supplier names, normalized supplier names,
+            match confidence, reason codes, and supporting fields.
+            """
+        )
+
+        display_normalized = normalized_data.copy()
+
+        if "spend_value" in display_normalized.columns:
+            display_normalized["spend_value"] = display_normalized["spend_value"].apply(format_currency)
+
+        st.dataframe(
+            clean_display_columns(display_normalized),
+            use_container_width=True,
+            hide_index=True,
+        )
+
         st.markdown("### Methodology")
+
         st.markdown(
             """
             1. Supplier names are cleaned by lowercasing, removing punctuation, and removing common legal suffixes.
@@ -871,6 +1031,7 @@ def main():
         )
 
         st.markdown("### Limitations")
+
         st.markdown(
             """
             - This tool does not verify legal entities against external databases.
