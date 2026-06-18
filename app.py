@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from collections import defaultdict
 
 import pandas as pd
@@ -64,15 +65,7 @@ def apply_styles():
             border: 1px solid #e2e8f0;
             box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
             margin-bottom: 1rem;
-        }
-
-        .warning-card {
-            background: #fffbeb;
-            border: 1px solid #fde68a;
-            padding: 1rem 1.1rem;
-            border-radius: 0.9rem;
-            color: #92400e;
-            margin-bottom: 1rem;
+            color: #1a1a1a;
         }
 
         div[data-testid="stMetricValue"] {
@@ -116,13 +109,6 @@ def format_number(value):
         return "Not available"
 
 
-def format_percent(value):
-    try:
-        return f"{float(value):.1f}%"
-    except Exception:
-        return "Not available"
-
-
 def clean_display_columns(df):
     display = df.copy()
     display.columns = [str(col).replace("_", " ").title() for col in display.columns]
@@ -130,15 +116,66 @@ def clean_display_columns(df):
 
 
 # ============================================================
-# SUPPLIER CLEANING / MATCHING CONFIG
+# CONFIG
 # ============================================================
 
 COMMON_SUFFIXES = [
     "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
     "co", "company", "plc", "lp", "llp", "gmbh", "ag", "sa", "sarl",
     "services", "service", "group", "holdings", "holding", "the",
+    "bv", "nv", "srl", "ltda", "pty", "pte", "sdn", "bhd", "ab",
 ]
 
+ABBREVIATION_MAP = {
+    "mfg": "manufacturing",
+    "mfr": "manufacturing",
+    "intl": "international",
+    "int": "international",
+    "svcs": "services",
+    "svc": "service",
+    "mgmt": "management",
+    "dist": "distribution",
+    "tech": "technologies",
+    "sys": "systems",
+    "assoc": "associates",
+    "bros": "brothers",
+    "grp": "group",
+    "soln": "solution",
+    "solns": "solutions",
+    "dept": "department",
+    "hldgs": "holdings",
+    "hlgs": "holdings",
+    "ctr": "center",
+    "natl": "national",
+    "amer": "american",
+    "engr": "engineering",
+    "engg": "engineering",
+    "inds": "industries",
+    "corp": "corporation",
+    "co": "company",
+}
+
+METADATA_PATTERNS = [
+    r"\(old\)",
+    r"\(inactive\)",
+    r"\(duplicate\)",
+    r"\(blocked\)",
+    r"\(merged\)",
+    r"\(legacy\)",
+    r"\[old\]",
+    r"\[inactive\]",
+    r"\[duplicate\]",
+    r"\[blocked\]",
+    r"\[merged\]",
+    r"\[legacy\]",
+    r"\bdo not use\b",
+    r"\binactive\b",
+    r"\bblocked\b",
+    r"\blegacy\b",
+    r"\bduplicate of\b.*",
+    r"\bformerly known as\b.*",
+    r"\bfka\b.*",
+]
 
 KNOWN_ALIASES = {
     "ibm": "IBM",
@@ -151,10 +188,8 @@ KNOWN_ALIASES = {
     "amazon com": "Amazon / AWS",
 
     "microsoft": "Microsoft",
-    "microsoft corp": "Microsoft",
-    "microsoft corporation": "Microsoft",
-    "msft": "Microsoft",
     "microsoft azure": "Microsoft",
+    "msft": "Microsoft",
 
     "google": "Google / Alphabet",
     "google cloud": "Google / Alphabet",
@@ -166,7 +201,6 @@ KNOWN_ALIASES = {
     "dhl global forwarding": "DHL",
 
     "fedex": "FedEx",
-    "fedex corp": "FedEx",
     "federal express": "FedEx",
 
     "ups": "UPS",
@@ -184,30 +218,59 @@ KNOWN_ALIASES = {
 
     "fastenal": "Fastenal",
     "staples": "Staples",
-    "staples inc": "Staples",
     "office depot": "Office Depot",
+
+    "3m": "3M",
+    "3 m": "3M",
 }
 
 
 # ============================================================
-# CORE CLEANING FUNCTIONS
+# CLEANING FUNCTIONS
 # ============================================================
 
+def normalize_unicode_text(value):
+    if pd.isna(value):
+        return ""
+
+    text = str(value)
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    return text
+
+
+def strip_metadata_annotations(text):
+    cleaned = text
+
+    for pattern in METADATA_PATTERNS:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+
+    return cleaned
+
+
+def expand_abbreviations(tokens):
+    return [ABBREVIATION_MAP.get(token, token) for token in tokens]
+
+
 def clean_supplier_name(name):
-    """
-    Creates a simplified comparison string for supplier matching.
-    This is not the final display name.
-    """
     if pd.isna(name):
         return ""
 
-    cleaned = str(name).lower().strip()
+    cleaned = normalize_unicode_text(name)
+    cleaned = cleaned.lower().strip()
+
+    cleaned = strip_metadata_annotations(cleaned)
+
     cleaned = re.sub(r"&", " and ", cleaned)
+    cleaned = re.sub(r"\b3[\s\-]?m\b", "3m", cleaned)
     cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-    words = [word for word in cleaned.split() if word not in COMMON_SUFFIXES]
-    return " ".join(words).strip()
+    tokens = cleaned.split()
+    tokens = expand_abbreviations(tokens)
+    tokens = [token for token in tokens if token not in COMMON_SUFFIXES]
+
+    return " ".join(tokens).strip()
 
 
 def alias_lookup(name):
@@ -216,9 +279,6 @@ def alias_lookup(name):
 
 
 def choose_canonical_name(original_names, spend_lookup):
-    """
-    For fuzzy-only groups, select the highest-spend supplier variant as the canonical name.
-    """
     valid_names = [str(name).strip() for name in original_names if str(name).strip()]
 
     if not valid_names:
@@ -231,26 +291,34 @@ def choose_canonical_name(original_names, spend_lookup):
     )[0]
 
 
-def confidence_band(score, method):
+def confidence_tier(score, method, variant_count=1):
+    """
+    Converts raw fuzzy score into a business-readable confidence tier.
+    Standalone suppliers are not duplicates.
+    """
+    if variant_count == 1:
+        return "Standalone Supplier"
+
     if method == "Known alias":
-        return "High"
+        return "Confirmed Duplicate"
+
     if score >= 95:
-        return "High"
-    if score >= 90:
-        return "Medium-High"
-    if score >= 85:
-        return "Medium / Review"
+        return "Confirmed Duplicate"
+
+    if score >= 88:
+        return "Probable Duplicate"
+
     if score >= 75:
-        return "Low / Review"
-    return "Low"
+        return "Possible Duplicate"
+
+    return "Not a Match"
 
 
 def false_positive_risk(score, variant_count, category_conflict=False, country_conflict=False):
-    """
-    Basic false-positive risk flag.
-    Category and country conflicts increase review risk.
-    """
     risk = "Low"
+
+    if variant_count == 1:
+        return "Low"
 
     if score < 90:
         risk = "Medium"
@@ -261,10 +329,68 @@ def false_positive_risk(score, variant_count, category_conflict=False, country_c
     if category_conflict or country_conflict:
         risk = "High"
 
-    if variant_count == 1:
-        risk = "Low"
-
     return risk
+
+
+def recommended_action(score, method, false_positive_risk_value, variant_count):
+    if variant_count == 1:
+        return "No duplicate action needed"
+
+    if method == "Known alias":
+        return "Suggested merge"
+
+    if false_positive_risk_value == "High":
+        return "Human review required"
+
+    if score >= 95:
+        return "Suggested merge"
+
+    if score >= 88:
+        return "Review before merge"
+
+    if score >= 75:
+        return "Investigate only"
+
+    return "Do not merge"
+
+
+def build_match_explanation(row):
+    variant_count = row.get("variant_count", 0)
+
+    if variant_count <= 1:
+        return (
+            "This supplier was not grouped with another supplier name. "
+            "No duplicate match was identified based on the current matching threshold."
+        )
+
+    reasons = []
+
+    if "KNOWN_ALIAS" in str(row.get("reason_codes", "")):
+        reasons.append("a known supplier alias rule matched")
+
+    if "FUZZY_NAME_MATCH" in str(row.get("reason_codes", "")):
+        reasons.append(
+            f"supplier names were similar after cleaning with an average match score of {row.get('average_match_score')}"
+        )
+
+    if "EXACT_CLEANED_NAME" in str(row.get("reason_codes", "")):
+        reasons.append("supplier names matched exactly after cleaning")
+
+    reasons.append(f"{variant_count} supplier-name variants were grouped together")
+
+    categories = str(row.get("categories_detected", ""))
+    countries = str(row.get("countries_detected", ""))
+
+    if "," in categories:
+        reasons.append("multiple categories were detected, increasing false-positive review risk")
+
+    if "," in countries:
+        reasons.append("multiple countries were detected, increasing hierarchy/subsidiary review risk")
+
+    if row.get("false_positive_risk") == "High":
+        reasons.append("false-positive risk is high, so this should not be auto-merged")
+
+    return "This group was flagged because " + "; ".join(reasons) + "."
 
 
 # ============================================================
@@ -289,19 +415,31 @@ def build_demo_data():
         ["D.H.L.", 310000, "Logistics", "United States", "V011"],
         ["DHL Global Forwarding", 420000, "Logistics", "United States", "V012"],
 
-        ["ABC Logistics LLC", 180000, "Logistics", "United States", "V013"],
-        ["ABC Logistic Services", 95000, "Logistics", "United States", "V014"],
-        ["ABC Consulting LLC", 220000, "Professional Services", "United States", "V015"],
+        ["Cascade Mfg Co.", 180000, "MRO", "United States", "V013"],
+        ["Cascade Manufacturing Company", 95000, "MRO", "United States", "V014"],
 
-        ["Delta Air Lines", 500000, "Travel", "United States", "V016"],
-        ["Delta Dental", 150000, "Benefits", "United States", "V017"],
+        ["Muller Industrial GmbH", 260000, "Industrial Supplies", "Germany", "V015"],
+        ["Müller Industrial GmbH", 180000, "Industrial Supplies", "Germany", "V016"],
 
-        ["Local HVAC Repair Co", 85000, "Facilities", "United States", "V018"],
-        ["Local H.V.A.C. Repair", 92000, "Facilities", "United States", "V019"],
+        ["Apex Tech Inc - DO NOT USE", 125000, "IT Services", "United States", "V017"],
+        ["Apex Technologies Incorporated", 140000, "IT Services", "United States", "V018"],
 
-        ["Staples Inc", 260000, "Office Supplies", "United States", "V020"],
-        ["Staples", 190000, "Office Supplies", "United States", "V021"],
-        ["Office Depot", 240000, "Office Supplies", "United States", "V022"],
+        ["ABC Logistics LLC", 180000, "Logistics", "United States", "V019"],
+        ["ABC Logistic Services", 95000, "Logistics", "United States", "V020"],
+        ["ABC Consulting LLC", 220000, "Professional Services", "United States", "V021"],
+
+        ["Delta Air Lines", 500000, "Travel", "United States", "V022"],
+        ["Delta Dental", 150000, "Benefits", "United States", "V023"],
+
+        ["National Freight Services", 620000, "Logistics", "United States", "V024"],
+        ["National Office Supplies", 120000, "Office Supplies", "United States", "V025"],
+
+        ["Local HVAC Repair Co", 85000, "Facilities", "United States", "V026"],
+        ["Local H.V.A.C. Repair", 92000, "Facilities", "United States", "V027"],
+
+        ["Staples Inc", 260000, "Office Supplies", "United States", "V028"],
+        ["Staples", 190000, "Office Supplies", "United States", "V029"],
+        ["Office Depot", 240000, "Office Supplies", "United States", "V030"],
     ]
 
     return pd.DataFrame(
@@ -394,7 +532,7 @@ def normalize_suppliers(
         else:
             unresolved.append(supplier)
 
-    # Step 2: fuzzy matching among unresolved names
+    # Step 2: exact cleaned-name match
     cleaned_to_originals = defaultdict(list)
 
     for supplier in unresolved:
@@ -408,16 +546,30 @@ def normalize_suppliers(
         else:
             cleaned_to_originals[cleaned].append(supplier)
 
-    cleaned_names = list(cleaned_to_originals.keys())
+    fuzzy_candidates = []
+
+    for cleaned_name, originals in cleaned_to_originals.items():
+        if len(originals) > 1:
+            canonical = choose_canonical_name(originals, spend_lookup)
+
+            for supplier in originals:
+                mapping[supplier] = canonical
+                scores[supplier] = 100
+                methods[supplier] = "Exact cleaned match"
+                reason_codes[supplier] = "EXACT_CLEANED_NAME"
+        else:
+            fuzzy_candidates.append(cleaned_name)
+
+    # Step 3: fuzzy matching among unresolved cleaned names
     assigned_cleaned_names = set()
 
-    for cleaned_name in cleaned_names:
+    for cleaned_name in fuzzy_candidates:
         if cleaned_name in assigned_cleaned_names:
             continue
 
         matches = process.extract(
             cleaned_name,
-            cleaned_names,
+            fuzzy_candidates,
             scorer=fuzz.token_set_ratio,
             score_cutoff=threshold,
             limit=None,
@@ -430,11 +582,16 @@ def normalize_suppliers(
             assigned_cleaned_names.add(matched_name)
 
         original_group = []
+
         for matched_name in matched_cleaned_names:
             original_group.extend(cleaned_to_originals[matched_name])
 
         canonical = choose_canonical_name(original_group, spend_lookup)
-        avg_score = round(sum(matched_scores) / len(matched_scores), 1) if matched_scores else 0
+
+        if len(original_group) > 1:
+            avg_score = round(sum(matched_scores) / len(matched_scores), 1)
+        else:
+            avg_score = 0
 
         for supplier in original_group:
             mapping[supplier] = canonical
@@ -444,15 +601,24 @@ def normalize_suppliers(
                 methods[supplier] = "Fuzzy match"
                 reason_codes[supplier] = "FUZZY_NAME_MATCH"
             else:
-                methods[supplier] = "No close match"
-                reason_codes[supplier] = "NO_CLOSE_MATCH"
+                methods[supplier] = "No duplicate found"
+                reason_codes[supplier] = "STANDALONE_SUPPLIER"
 
     data["normalized_supplier_name"] = data["original_supplier_name"].map(mapping)
     data["match_score"] = data["original_supplier_name"].map(scores)
     data["match_method"] = data["original_supplier_name"].map(methods)
     data["reason_code"] = data["original_supplier_name"].map(reason_codes)
-    data["confidence_band"] = data.apply(
-        lambda row: confidence_band(row["match_score"], row["match_method"]),
+
+    data["variant_count_for_normalized_supplier"] = data.groupby(
+        "normalized_supplier_name"
+    )["original_supplier_name"].transform("nunique")
+
+    data["confidence_tier"] = data.apply(
+        lambda row: confidence_tier(
+            row["match_score"],
+            row["match_method"],
+            row["variant_count_for_normalized_supplier"],
+        ),
         axis=1,
     )
 
@@ -478,6 +644,22 @@ def normalize_suppliers(
         )
 
         if len(variants) == 1:
+            group_method = "Standalone"
+        elif "Known alias" in group_df["match_method"].values:
+            group_method = "Known alias"
+        else:
+            group_method = "Fuzzy match"
+
+        tier = confidence_tier(avg_score, group_method, len(variants))
+
+        action = recommended_action(
+            avg_score,
+            group_method,
+            fp_risk,
+            len(variants),
+        )
+
+        if len(variants) == 1:
             review_status = "No Review Needed"
         elif fp_risk == "High":
             review_status = "Needs Review"
@@ -494,6 +676,8 @@ def normalize_suppliers(
                 "variant_count": len(variants),
                 "total_spend": total_spend,
                 "average_match_score": round(avg_score, 1),
+                "confidence_tier": tier,
+                "recommended_action": action,
                 "match_methods": ", ".join(sorted(group_df["match_method"].dropna().unique())),
                 "reason_codes": ", ".join(sorted(group_df["reason_code"].dropna().unique())),
                 "categories_detected": ", ".join(categories),
@@ -511,6 +695,8 @@ def normalize_suppliers(
             ascending=[False, False],
         )
 
+        group_summary["match_explanation"] = group_summary.apply(build_match_explanation, axis=1)
+
     return data, group_summary
 
 
@@ -523,7 +709,6 @@ def build_golden_records(normalized_data):
 
     for normalized_name, group_df in normalized_data.groupby("normalized_supplier_name", dropna=False):
         variants = sorted(group_df["original_supplier_name"].dropna().astype(str).unique())
-
         highest_spend_row = group_df.sort_values("spend_value", ascending=False).iloc[0]
 
         categories = group_df["category_value"].dropna().astype(str)
@@ -631,7 +816,7 @@ def main():
     st.markdown(
         """
         <div class="hero-card">
-            <div class="hero-label">Sid's Portfolio - Procurement Data Quality Accelerator</div>
+            <div class="hero-label">Sid's AI Portfolio - Procurement Data Quality Accelerator</div>
             <div class="hero-title">Supplier Normalization & Duplicate Detection Workbench</div>
             <div class="hero-subtitle">
                 Upload messy supplier data, detect duplicate vendor records, normalize supplier families,
@@ -821,35 +1006,74 @@ def main():
             unsafe_allow_html=True,
         )
 
-        st.markdown("### Before / After Impact")
+        st.markdown("### Normalization Impact Summary")
 
-        impact = pd.DataFrame(
+        impact_cols = st.columns(3)
+
+        impact_cols[0].metric(
+            "Supplier Names Reduced",
+            format_number(before_supplier_count - after_supplier_count),
+        )
+
+        impact_cols[1].metric(
+            "Reduction Rate",
+            f"{((before_supplier_count - after_supplier_count) / before_supplier_count * 100):.1f}%"
+            if before_supplier_count > 0
+            else "0.0%",
+        )
+
+        impact_cols[2].metric(
+            "Spend in Duplicate Groups",
+            format_currency(spend_affected),
+        )
+
+        st.markdown("### Supplier Count Before vs. After")
+
+        supplier_count_summary = pd.DataFrame(
             [
                 {
-                    "metric": "Unique supplier names",
-                    "before": before_supplier_count,
-                    "after": after_supplier_count,
+                    "view": "Raw supplier names",
+                    "supplier_count": before_supplier_count,
+                    "interpretation": "Unique supplier names exactly as they appeared in the uploaded file.",
                 },
                 {
-                    "metric": "Potential duplicate groups",
-                    "before": "Not available",
-                    "after": duplicate_groups,
-                },
-                {
-                    "metric": "Groups requiring review",
-                    "before": "Not available",
-                    "after": review_groups,
-                },
-                {
-                    "metric": "Spend affected by duplicate groups",
-                    "before": "Not available",
-                    "after": format_currency(spend_affected),
+                    "view": "Normalized supplier families",
+                    "supplier_count": after_supplier_count,
+                    "interpretation": "Supplier families after alias matching, cleaning, and fuzzy grouping.",
                 },
             ]
         )
 
         st.dataframe(
-            clean_display_columns(impact),
+            clean_display_columns(supplier_count_summary),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("### Diagnostic Findings")
+
+        diagnostic_summary = pd.DataFrame(
+            [
+                {
+                    "finding": "Potential duplicate groups",
+                    "value": duplicate_groups,
+                    "meaning": "Supplier groups where multiple raw names may refer to the same supplier family.",
+                },
+                {
+                    "finding": "Groups requiring review",
+                    "value": review_groups,
+                    "meaning": "Groups that should be manually reviewed before any vendor-master cleanup decision.",
+                },
+                {
+                    "finding": "Spend affected by duplicate groups",
+                    "value": format_currency(spend_affected),
+                    "meaning": "Spend tied to supplier groups with more than one raw supplier-name variant.",
+                },
+            ]
+        )
+
+        st.dataframe(
+            clean_display_columns(diagnostic_summary),
             use_container_width=True,
             hide_index=True,
         )
@@ -895,8 +1119,8 @@ def main():
         st.markdown(
             """
             This section shows proposed supplier-family groupings, highlights records requiring human review,
-            and recommends golden supplier records. Groups marked as **Needs Review** should not be automatically
-            merged without validation.
+            explains why records were grouped, and recommends golden supplier records. Groups marked as
+            **Needs Review** should not be automatically merged without validation.
             """
         )
 
@@ -906,23 +1130,78 @@ def main():
         ].copy()
 
         review_cols = st.columns(4)
-        review_cols[0].metric("Total Match Groups", format_number(len(group_summary)))
+        review_cols[0].metric("Total Supplier Families", format_number(len(group_summary)))
         review_cols[1].metric("Duplicate Groups", format_number(duplicate_groups))
         review_cols[2].metric("Needs Review", format_number(len(review_queue)))
         review_cols[3].metric("Spend Affected", format_currency(spend_affected))
 
-        st.markdown("### Match Groups")
+        st.markdown("### Potential Duplicate Match Groups")
 
-        display_groups = group_summary.copy()
+        match_groups_only = group_summary[group_summary["variant_count"] > 1].copy()
 
-        if not display_groups.empty and "total_spend" in display_groups.columns:
-            display_groups["total_spend"] = display_groups["total_spend"].apply(format_currency)
+        if match_groups_only.empty:
+            st.success("No potential duplicate supplier groups were found at the current matching threshold.")
+        else:
+            display_match_groups = match_groups_only.copy()
 
-        st.dataframe(
-            clean_display_columns(display_groups),
-            use_container_width=True,
-            hide_index=True,
-        )
+            if "total_spend" in display_match_groups.columns:
+                display_match_groups["total_spend"] = display_match_groups["total_spend"].apply(format_currency)
+
+            preferred_columns = [
+                "match_group_id",
+                "normalized_supplier_name",
+                "original_supplier_variants",
+                "variant_count",
+                "total_spend",
+                "average_match_score",
+                "confidence_tier",
+                "recommended_action",
+                "false_positive_risk",
+                "review_status",
+                "categories_detected",
+                "countries_detected",
+            ]
+
+            display_match_groups = display_match_groups[
+                [col for col in preferred_columns if col in display_match_groups.columns]
+            ]
+
+            st.caption("Select a row below to view the match explanation.")
+
+            selected_event = st.dataframe(
+                clean_display_columns(display_match_groups),
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="match_group_selection",
+            )
+
+            selected_rows = selected_event.selection.rows
+
+            if selected_rows:
+                selected_position = selected_rows[0]
+            else:
+                selected_position = 0
+
+            selected_row = match_groups_only.iloc[selected_position]
+
+            st.markdown("### Match Explanation")
+
+            st.markdown(
+                f"""
+                <div class="info-card">
+                    <strong>Normalized Supplier Family:</strong> {selected_row["normalized_supplier_name"]}<br><br>
+                    <strong>Supplier Variants:</strong> {selected_row["original_supplier_variants"]}<br><br>
+                    <strong>Average Match Score:</strong> {selected_row["average_match_score"]}<br><br>
+                    <strong>Confidence Tier:</strong> {selected_row["confidence_tier"]}<br><br>
+                    <strong>Recommended Action:</strong> {selected_row["recommended_action"]}<br><br>
+                    <strong>False Positive Risk:</strong> {selected_row["false_positive_risk"]}<br><br>
+                    <strong>Explanation:</strong> {selected_row["match_explanation"]}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         st.markdown("### Human Review Queue")
 
@@ -1001,8 +1280,8 @@ def main():
 
         st.markdown(
             """
-            This is the row-level output with original supplier names, normalized supplier names,
-            match confidence, reason codes, and supporting fields.
+            This is the row-level output with original supplier names, cleaned supplier names,
+            normalized supplier names, match confidence, reason codes, and supporting fields.
             """
         )
 
@@ -1021,12 +1300,15 @@ def main():
 
         st.markdown(
             """
-            1. Supplier names are cleaned by lowercasing, removing punctuation, and removing common legal suffixes.
+            1. Supplier names are normalized using unicode cleanup, lowercasing, whitespace cleanup, punctuation removal, legal suffix removal, abbreviation expansion, and ERP metadata stripping.
             2. Known aliases are applied first for common supplier families such as AWS, IBM, Microsoft, DHL, FedEx, and others.
-            3. Remaining supplier names are grouped using RapidFuzz fuzzy matching.
-            4. Match confidence is calculated using the fuzzy score and match method.
-            5. Groups with lower confidence, category conflicts, or country conflicts are sent to the human review queue.
-            6. Golden records are recommended using normalized supplier family names and simple survivorship logic.
+            3. Exact cleaned-name matches are grouped before fuzzy matching.
+            4. Remaining supplier names are grouped using RapidFuzz fuzzy matching.
+            5. Standalone suppliers are separated from duplicate groups and are not treated as confirmed duplicates.
+            6. Match confidence is translated into business-readable tiers: Confirmed Duplicate, Probable Duplicate, Possible Duplicate, Not a Match, and Standalone Supplier.
+            7. Groups with lower confidence, category conflicts, country conflicts, or high false-positive risk are routed to the human review queue.
+            8. Each duplicate match group includes a deterministic explanation showing why the supplier variants were grouped.
+            9. Golden records are recommended using normalized supplier family names and simple survivorship logic.
             """
         )
 
@@ -1037,7 +1319,7 @@ def main():
             - This tool does not verify legal entities against external databases.
             - Fuzzy matching is directional and requires human review before ERP/vendor-master updates.
             - Parent-company and corporate hierarchy mapping are not included in this MVP.
-            - Tax ID, address, domain, and D-U-N-S matching can be added in a future version.
+            - Tax ID, address, domain, LEI, and D-U-N-S matching can be added in a future version.
             - Supplier consolidation decisions should be validated with contracts, business owners, tax/legal data, and category strategy.
             """
         )
