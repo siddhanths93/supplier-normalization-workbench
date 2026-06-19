@@ -122,9 +122,39 @@ def clean_display_columns(df):
 COMMON_SUFFIXES = [
     "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
     "co", "company", "plc", "lp", "llp", "gmbh", "ag", "sa", "sarl",
-    "services", "service", "group", "holdings", "holding", "the",
     "bv", "nv", "srl", "ltda", "pty", "pte", "sdn", "bhd", "ab",
 ]
+
+BUSINESS_NOISE_WORDS = [
+    "services", "service", "group", "holdings", "holding", "company",
+    "corporation", "corp", "inc", "llc", "ltd", "limited", "plc", "lp",
+    "llp", "ag", "gmbh", "sa", "america", "american",
+]
+
+ERP_NOISE_WORDS = [
+    "ap", "a p", "accounts payable", "payable", "ach", "wire",
+    "pcard", "p-card", "p card", "credit card", "credit", "card",
+    "po", "purchasing", "procurement", "indirect", "direct",
+    "marketplace", "online", "store", "vendor", "old vendor",
+    "legacy", "blocked", "inactive", "duplicate", "do not use",
+    "remit", "remit to", "ap hold", "hold", "old", "new", "regional",
+    "local", "global", "national", "international", "intl",
+    "north america", "america", "americas", "emea", "apac", "latam",
+    "na", "us", "u s", "usa", "u s a", "canada", "mexico",
+    "new york", "ny", "nyc", "atlanta", "dallas", "chicago",
+    "tor", "toronto", "mia", "miami", "houston", "boston",
+    "san francisco", "sf", "los angeles", "la",
+]
+
+GENERIC_MATCH_TOKENS = {
+    "consulting", "services", "service", "group", "company", "companies",
+    "industries", "industry", "corporation", "corp", "inc", "llc",
+    "technologies", "technology", "systems", "solutions", "solution",
+    "international", "global", "national", "america", "american",
+    "business", "advantage", "partners", "partner", "management",
+    "enterprise", "enterprises", "supply", "supplies", "industrial",
+    "products", "product", "energy", "automation", "express",
+}
 
 ABBREVIATION_MAP = {
     "mfg": "manufacturing",
@@ -175,53 +205,303 @@ METADATA_PATTERNS = [
     r"\bduplicate of\b.*",
     r"\bformerly known as\b.*",
     r"\bfka\b.*",
+    r"\b/remit to\b",
+    r"\bremit to\b",
+]
+
+CANONICAL_SUPPLIER_LIBRARY = [
+    "3M Company",
+    "ABC Supply",
+    "ABM Industries",
+    "ADP",
+    "Accenture",
+    "Adobe Inc",
+    "Agilent Technologies",
+    "Airgas USA",
+    "Amazon Web Services",
+    "American Express",
+    "Apple Inc",
+    "AppleOne Employment Services",
+    "BASF Corporation",
+    "BP Energy",
+    "Bain & Company",
+    "Bank of America",
+    "Boston Consulting Group",
+    "C.H. Robinson",
+    "CBRE Group",
+    "CDW Corporation",
+    "Cardinal Health",
+    "Chevron Products",
+    "Cisco Systems",
+    "Constellation Energy",
+    "CrowdStrike",
+    "DHL Express",
+    "Dell Technologies",
+    "Deloitte Consulting",
+    "Delta Air Lines",
+    "Delta Dental",
+    "Dow Chemical",
+    "DuPont",
+    "Duke Energy",
+    "Ernst & Young",
+    "ExxonMobil Fuels",
+    "Expeditors International",
+    "Fastenal",
+    "FedEx Corporation",
+    "Fortinet",
+    "Grainger",
+    "Graybar Electric",
+    "HP Inc",
+    "Honeywell International",
+    "IBM Corporation",
+    "Insight Enterprises",
+    "Insight Global",
+    "International Paper",
+    "JLL",
+    "Johnson Controls",
+    "Kelly Services",
+    "Kone Inc",
+    "LinkedIn Corporation",
+    "Linde Gas & Equipment",
+    "Matheson Tri-Gas",
+    "McKinsey & Company",
+    "Medline Industries",
+    "Microsoft Corporation",
+    "Motion Industries",
+    "MSC Industrial Supply",
+    "Okta",
+    "Oracle Corporation",
+    "Otis Elevator",
+    "Palo Alto Networks",
+    "Peachtree Consulting",
+    "PricewaterhouseCoopers",
+    "Randstad",
+    "Republic Services",
+    "Robert Half",
+    "Rockwell Automation",
+    "SAP America",
+    "Salesforce Inc",
+    "SHI International",
+    "Siemens Industry",
+    "Slack Technologies",
+    "Staples Business Advantage",
+    "United Airlines",
+    "United Parcel Service",
+    "VWR International",
+    "Waste Management",
+    "Workday",
+    "XPO Logistics",
+    "Zoom Video Communications",
 ]
 
 KNOWN_ALIASES = {
-    "ibm": "IBM",
-    "i b m": "IBM",
-    "international business machines": "IBM",
+    "ibm": "IBM Corporation",
+    "i b m": "IBM Corporation",
+    "international business machines": "IBM Corporation",
 
-    "aws": "Amazon / AWS",
-    "amazon web services": "Amazon / AWS",
-    "amazon": "Amazon / AWS",
-    "amazon com": "Amazon / AWS",
+    "aws": "Amazon Web Services",
+    "amazon web services": "Amazon Web Services",
+    "amazon": "Amazon Web Services",
 
-    "microsoft": "Microsoft",
-    "microsoft azure": "Microsoft",
-    "msft": "Microsoft",
+    "microsoft": "Microsoft Corporation",
+    "microsoft corporation": "Microsoft Corporation",
+    "microsoft company": "Microsoft Corporation",
+    "mcrsft corporation": "Microsoft Corporation",
+    "micro soft corporation": "Microsoft Corporation",
+    "msft": "Microsoft Corporation",
 
-    "google": "Google / Alphabet",
-    "google cloud": "Google / Alphabet",
-    "alphabet": "Google / Alphabet",
-    "youtube": "Google / Alphabet",
+    "fedex": "FedEx Corporation",
+    "fedex corporation": "FedEx Corporation",
+    "fedex corp": "FedEx Corporation",
+    "fdx corporation": "FedEx Corporation",
+    "fc": "FedEx Corporation",
+    "federal express": "FedEx Corporation",
 
-    "dhl": "DHL",
-    "dhl express": "DHL",
-    "dhl global forwarding": "DHL",
+    "ups": "United Parcel Service",
+    "united parcel service": "United Parcel Service",
 
-    "fedex": "FedEx",
-    "federal express": "FedEx",
+    "dhl": "DHL Express",
+    "dhl express": "DHL Express",
+    "dhl experss": "DHL Express",
+    "dhl expre ss": "DHL Express",
 
-    "ups": "UPS",
-    "united parcel service": "UPS",
+    "dell technologies": "Dell Technologies",
+    "dell tech": "Dell Technologies",
+    "dll technologies": "Dell Technologies",
+    "deell technologies": "Dell Technologies",
+    "dt": "Dell Technologies",
 
-    "oracle": "Oracle",
-    "oracle america": "Oracle",
+    "accenture": "Accenture",
+    "accennture": "Accenture",
 
-    "sap": "SAP",
-    "sap america": "SAP",
+    "duke energy": "Duke Energy",
+    "dske energy": "Duke Energy",
+    "duke nrgy": "Duke Energy",
+
+    "international paper": "International Paper",
+    "intl paper": "International Paper",
+    "ip": "International Paper",
+    "internatiobal paper": "International Paper",
+    "interantional paper": "International Paper",
+
+    "rockwell automation": "Rockwell Automation",
+    "rockwell tmtn": "Rockwell Automation",
+
+    "kone": "Kone Inc",
+    "kone inc": "Kone Inc",
+    "kn inc": "Kone Inc",
+    "ki": "Kone Inc",
+
+    "zoom video communications": "Zoom Video Communications",
+    "zoom video comm": "Zoom Video Communications",
+    "zoom video cmmnctns": "Zoom Video Communications",
+    "zvc": "Zoom Video Communications",
+
+    "adobe": "Adobe Inc",
+    "adobe inc": "Adobe Inc",
+
+    "salesforce": "Salesforce Inc",
+    "salesforce inc": "Salesforce Inc",
+
+    "sap": "SAP America",
+    "sap america": "SAP America",
+    "sa": "SAP America",
+
+    "staples": "Staples Business Advantage",
+    "staples business advantage": "Staples Business Advantage",
+    "sba": "Staples Business Advantage",
+
+    "workday": "Workday",
+    "woruday": "Workday",
+    "wrkday": "Workday",
+
+    "slack": "Slack Technologies",
+    "slack technologies": "Slack Technologies",
+
+    "linkedin": "LinkedIn Corporation",
+    "linkedin corporation": "LinkedIn Corporation",
+    "lc": "LinkedIn Corporation",
+
+    "linde gas": "Linde Gas & Equipment",
+    "linde gas equipment": "Linde Gas & Equipment",
+    "lge": "Linde Gas & Equipment",
+
+    "mckinsey": "McKinsey & Company",
+    "mckinsey company": "McKinsey & Company",
+    "mc": "McKinsey & Company",
+
+    "siemens": "Siemens Industry",
+    "siemens industry": "Siemens Industry",
+    "si": "Siemens Industry",
+
+    "medline": "Medline Industries",
+    "medline industries": "Medline Industries",
+    "mi": "Medline Industries",
+
+    "kelly services": "Kelly Services",
+    "ks": "Kelly Services",
+
+    "palo alto networks": "Palo Alto Networks",
+    "pan": "Palo Alto Networks",
+
+    "united airlines": "United Airlines",
+    "ua": "United Airlines",
+
+    "hp": "HP Inc",
+    "hp inc": "HP Inc",
+
+    "adp": "ADP",
+    "jll": "JLL",
+
+    "msc industrial": "MSC Industrial Supply",
+    "msc industrial supply": "MSC Industrial Supply",
+    "mis": "MSC Industrial Supply",
+
+    "bcg": "Boston Consulting Group",
+    "boston consulting": "Boston Consulting Group",
+    "boston consulting group": "Boston Consulting Group",
+    "boston connsulting group": "Boston Consulting Group",
+
+    "bain": "Bain & Company",
+    "bain company": "Bain & Company",
+
+    "ey": "Ernst & Young",
+    "ernst young": "Ernst & Young",
+
+    "3m": "3M Company",
+    "3 m": "3M Company",
+    "3m company": "3M Company",
 
     "grainger": "Grainger",
     "ww grainger": "Grainger",
     "w w grainger": "Grainger",
+    "graingre": "Grainger",
+
+    "republic services": "Republic Services",
+    "rs": "Republic Services",
+
+    "shi": "SHI International",
+    "shi international": "SHI International",
+
+    "oracle": "Oracle Corporation",
+    "oracle corporation": "Oracle Corporation",
+
+    "waste management": "Waste Management",
+    "wastte management": "Waste Management",
+    "wafte management": "Waste Management",
+
+    "chevron products": "Chevron Products",
+    "chvrn products": "Chevron Products",
+
+    "pricewaterhousecoopers": "PricewaterhouseCoopers",
+    "pricewaterhosuecoopers": "PricewaterhouseCoopers",
+    "pwc": "PricewaterhouseCoopers",
+
+    "cisco systems": "Cisco Systems",
+    "cicso systems": "Cisco Systems",
+
+    "randstad": "Randstad",
+    "r stad": "Randstad",
+
+    "abc supply": "ABC Supply",
+    "abc spply": "ABC Supply",
+    "abc supplly": "ABC Supply",
+
+    "agilent technologies": "Agilent Technologies",
+
+    "american express": "American Express",
+    "americanexpress": "American Express",
+
+    "dow chemical": "Dow Chemical",
+    "dow chomical": "Dow Chemical",
+
+    "dupont": "DuPont",
+    "dupoont": "DuPont",
+
+    "exxonmobil fuels": "ExxonMobil Fuels",
+    "exxonmobil fls": "ExxonMobil Fuels",
 
     "fastenal": "Fastenal",
-    "staples": "Staples",
-    "office depot": "Office Depot",
+    "fastennal": "Fastenal",
+    "fasthnal": "Fastenal",
 
-    "3m": "3M",
-    "3 m": "3M",
+    "graybar electric": "Graybar Electric",
+    "graybar lctrc": "Graybar Electric",
+    "grybr electric": "Graybar Electric",
+
+    "peachtree consulting": "Peachtree Consulting",
+    "peachtree connsulting": "Peachtree Consulting",
+
+    "robert half": "Robert Half",
+    "robert hlaf": "Robert Half",
+
+    "expeditors international": "Expeditors International",
+    "xpdtrs international": "Expeditors International",
+
+    "xpo logistics": "XPO Logistics",
+    "xpo lgstcs": "XPO Logistics",
+
+    "insight global": "Insight Global",
 }
 
 
@@ -265,17 +545,106 @@ def clean_supplier_name(name):
     cleaned = re.sub(r"\b3[\s\-]?m\b", "3m", cleaned)
     cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = cleaned.strip(" -_#.*!@$/\\")
 
     tokens = cleaned.split()
     tokens = expand_abbreviations(tokens)
     tokens = [token for token in tokens if token not in COMMON_SUFFIXES]
 
-    return " ".join(tokens).strip()
+    return " ".join(tokens).strip(" -_#.*!@$/\\")
+
+
+def strip_erp_noise_tokens(cleaned_name):
+    text = f" {cleaned_name} "
+
+    text = re.sub(r"\b\d{4}\b", " ", text)
+    text = re.sub(r"\b\d+\b", " ", text)
+    text = re.sub(r"\b[a-z]{2,5}\d{2,6}\b", " ", text)
+
+    multi_word_noise = sorted(
+        [word for word in ERP_NOISE_WORDS if " " in word],
+        key=len,
+        reverse=True,
+    )
+
+    for phrase in multi_word_noise:
+        text = re.sub(rf"\b{re.escape(phrase)}\b", " ", text)
+
+    tokens = text.split()
+    single_word_noise = set(word for word in ERP_NOISE_WORDS if " " not in word)
+    tokens = [token for token in tokens if token not in single_word_noise]
+
+    return " ".join(tokens).strip(" -_#.*!@$/\\")
+
+
+def extract_core_supplier_name(name):
+    cleaned = clean_supplier_name(name)
+
+    core = strip_erp_noise_tokens(cleaned)
+
+    tokens = core.split()
+    tokens = [token for token in tokens if token not in BUSINESS_NOISE_WORDS]
+
+    core = " ".join(tokens).strip(" -_#.*!@$/\\")
+
+    if not core:
+        core = cleaned
+
+    return core
+
+
+def has_meaningful_token_overlap(core_a, core_b):
+    tokens_a = set(core_a.split())
+    tokens_b = set(core_b.split())
+
+    shared = tokens_a.intersection(tokens_b)
+
+    if not shared:
+        return False
+
+    meaningful_shared = shared.difference(GENERIC_MATCH_TOKENS)
+
+    if len(meaningful_shared) == 0:
+        return False
+
+    return True
 
 
 def alias_lookup(name):
-    cleaned = clean_supplier_name(name)
-    return KNOWN_ALIASES.get(cleaned)
+    core = extract_core_supplier_name(name)
+    return KNOWN_ALIASES.get(core)
+
+
+def canonical_library_lookup(name, threshold=90):
+    core = extract_core_supplier_name(name)
+
+    if not core:
+        return None, 0
+
+    canonical_clean_map = {
+        extract_core_supplier_name(canonical): canonical
+        for canonical in CANONICAL_SUPPLIER_LIBRARY
+    }
+
+    if core in canonical_clean_map:
+        return canonical_clean_map[core], 100
+
+    match = process.extractOne(
+        core,
+        list(canonical_clean_map.keys()),
+        scorer=fuzz.token_set_ratio,
+        score_cutoff=threshold,
+    )
+
+    if match:
+        matched_core, score, _ = match
+
+        if not has_meaningful_token_overlap(core, matched_core):
+            return None, 0
+
+        return canonical_clean_map[matched_core], score
+
+    return None, 0
 
 
 def choose_canonical_name(original_names, spend_lookup):
@@ -292,14 +661,10 @@ def choose_canonical_name(original_names, spend_lookup):
 
 
 def confidence_tier(score, method, variant_count=1):
-    """
-    Converts raw fuzzy score into a business-readable confidence tier.
-    Standalone suppliers are not duplicates.
-    """
     if variant_count == 1:
         return "Standalone Supplier"
 
-    if method == "Known alias":
+    if method in ["Known alias", "Canonical library match"]:
         return "Confirmed Duplicate"
 
     if score >= 95:
@@ -315,10 +680,10 @@ def confidence_tier(score, method, variant_count=1):
 
 
 def false_positive_risk(score, variant_count, category_conflict=False, country_conflict=False):
-    risk = "Low"
-
     if variant_count == 1:
         return "Low"
+
+    risk = "Low"
 
     if score < 90:
         risk = "Medium"
@@ -336,7 +701,7 @@ def recommended_action(score, method, false_positive_risk_value, variant_count):
     if variant_count == 1:
         return "No duplicate action needed"
 
-    if method == "Known alias":
+    if method in ["Known alias", "Canonical library match"]:
         return "Suggested merge"
 
     if false_positive_risk_value == "High":
@@ -368,13 +733,16 @@ def build_match_explanation(row):
     if "KNOWN_ALIAS" in str(row.get("reason_codes", "")):
         reasons.append("a known supplier alias rule matched")
 
-    if "FUZZY_NAME_MATCH" in str(row.get("reason_codes", "")):
+    if "CANONICAL_LIBRARY_MATCH" in str(row.get("reason_codes", "")):
+        reasons.append("the cleaned supplier name matched the canonical supplier library")
+
+    if "FUZZY_CORE_NAME_MATCH" in str(row.get("reason_codes", "")):
         reasons.append(
-            f"supplier names were similar after cleaning with an average match score of {row.get('average_match_score')}"
+            f"supplier names were similar after core-name extraction with an average match score of {row.get('average_match_score')}"
         )
 
-    if "EXACT_CLEANED_NAME" in str(row.get("reason_codes", "")):
-        reasons.append("supplier names matched exactly after cleaning")
+    if "EXACT_CORE_NAME" in str(row.get("reason_codes", "")):
+        reasons.append("supplier names matched exactly after core-name extraction")
 
     reasons.append(f"{variant_count} supplier-name variants were grouped together")
 
@@ -399,47 +767,20 @@ def build_match_explanation(row):
 
 def build_demo_data():
     rows = [
-        ["IBM", 900000, "IT Services", "United States", "V001"],
-        ["I.B.M. Corp", 450000, "IT Services", "United States", "V002"],
-        ["International Business Machines", 700000, "IT Services", "United States", "V003"],
-
-        ["Amazon Web Services", 1250000, "Cloud", "United States", "V004"],
-        ["AWS", 540000, "Cloud", "United States", "V005"],
-        ["Amazon.com", 210000, "Office Supplies", "United States", "V006"],
-
-        ["Microsoft Corp", 1800000, "Software", "United States", "V007"],
-        ["MSFT", 350000, "Software", "United States", "V008"],
-        ["Microsoft Azure", 950000, "Cloud", "United States", "V009"],
-
-        ["DHL Express", 760000, "Logistics", "United States", "V010"],
-        ["D.H.L.", 310000, "Logistics", "United States", "V011"],
-        ["DHL Global Forwarding", 420000, "Logistics", "United States", "V012"],
-
-        ["Cascade Mfg Co.", 180000, "MRO", "United States", "V013"],
-        ["Cascade Manufacturing Company", 95000, "MRO", "United States", "V014"],
-
-        ["Muller Industrial GmbH", 260000, "Industrial Supplies", "Germany", "V015"],
-        ["Müller Industrial GmbH", 180000, "Industrial Supplies", "Germany", "V016"],
-
-        ["Apex Tech Inc - DO NOT USE", 125000, "IT Services", "United States", "V017"],
-        ["Apex Technologies Incorporated", 140000, "IT Services", "United States", "V018"],
-
-        ["ABC Logistics LLC", 180000, "Logistics", "United States", "V019"],
-        ["ABC Logistic Services", 95000, "Logistics", "United States", "V020"],
-        ["ABC Consulting LLC", 220000, "Professional Services", "United States", "V021"],
-
-        ["Delta Air Lines", 500000, "Travel", "United States", "V022"],
-        ["Delta Dental", 150000, "Benefits", "United States", "V023"],
-
-        ["National Freight Services", 620000, "Logistics", "United States", "V024"],
-        ["National Office Supplies", 120000, "Office Supplies", "United States", "V025"],
-
-        ["Local HVAC Repair Co", 85000, "Facilities", "United States", "V026"],
-        ["Local H.V.A.C. Repair", 92000, "Facilities", "United States", "V027"],
-
-        ["Staples Inc", 260000, "Office Supplies", "United States", "V028"],
-        ["Staples", 190000, "Office Supplies", "United States", "V029"],
-        ["Office Depot", 240000, "Office Supplies", "United States", "V030"],
+        ["#Wastte Management", 500000, "Facilities", "United States", "V001"],
+        [".Cicso Systems (do not use)-", 450000, "IT Hardware", "United States", "V002"],
+        ["AMERICAN EXPRESS", 300000, "Travel", "United States", "V003"],
+        ["Agilent Technologies, L.L.C.", 250000, "Lab Supplies", "United States", "V004"],
+        ["Peachtree Connsulting", 200000, "Consulting", "United States", "V005"],
+        ["Wrkday", 750000, "Software", "United States", "V006"],
+        ["xpdtrs International", 600000, "Logistics", "United States", "V007"],
+        ["#INTL Insight Global-", 550000, "Professional Services", "United States", "V008"],
+        ["DHL Express PCard", 760000, "Logistics", "United States", "V009"],
+        ["D.H.L. Express - DO NOT USE", 310000, "Logistics", "United States", "V010"],
+        ["SAP America AP HOLD", 330000, "Software", "United States", "V011"],
+        ["SA", 110000, "Software", "United States", "V012"],
+        ["Boston Consulting Group", 500000, "Consulting", "United States", "V013"],
+        ["Deloitte Consulting", 800000, "Consulting", "United States", "V014"],
     ]
 
     return pd.DataFrame(
@@ -477,12 +818,14 @@ def normalize_suppliers(
     spend_col=None,
     category_col=None,
     country_col=None,
-    threshold=88,
+    threshold=82,
+    canonical_threshold=88,
 ):
     data = df.copy()
 
     data["original_supplier_name"] = data[supplier_col].fillna("Unknown Supplier").astype(str)
     data["clean_supplier_name"] = data["original_supplier_name"].apply(clean_supplier_name)
+    data["core_supplier_name"] = data["original_supplier_name"].apply(extract_core_supplier_name)
 
     if spend_col and spend_col in data.columns:
         data["spend_value"] = (
@@ -520,7 +863,6 @@ def normalize_suppliers(
 
     unresolved = []
 
-    # Step 1: known alias matching
     for supplier in original_suppliers:
         alias = alias_lookup(supplier)
 
@@ -529,62 +871,73 @@ def normalize_suppliers(
             scores[supplier] = 100
             methods[supplier] = "Known alias"
             reason_codes[supplier] = "KNOWN_ALIAS"
-        else:
-            unresolved.append(supplier)
+            continue
 
-    # Step 2: exact cleaned-name match
-    cleaned_to_originals = defaultdict(list)
+        canonical_match, canonical_score = canonical_library_lookup(
+            supplier,
+            threshold=canonical_threshold,
+        )
+
+        if canonical_match:
+            mapping[supplier] = canonical_match
+            scores[supplier] = canonical_score
+            methods[supplier] = "Canonical library match"
+            reason_codes[supplier] = "CANONICAL_LIBRARY_MATCH"
+            continue
+
+        unresolved.append(supplier)
+
+    core_to_originals = defaultdict(list)
 
     for supplier in unresolved:
-        cleaned = clean_supplier_name(supplier)
+        core = extract_core_supplier_name(supplier)
 
-        if not cleaned:
+        if not core:
             mapping[supplier] = "Unknown Supplier"
             scores[supplier] = 0
             methods[supplier] = "Missing supplier name"
             reason_codes[supplier] = "MISSING_NAME"
         else:
-            cleaned_to_originals[cleaned].append(supplier)
+            core_to_originals[core].append(supplier)
 
     fuzzy_candidates = []
 
-    for cleaned_name, originals in cleaned_to_originals.items():
+    for core_name, originals in core_to_originals.items():
         if len(originals) > 1:
             canonical = choose_canonical_name(originals, spend_lookup)
 
             for supplier in originals:
                 mapping[supplier] = canonical
                 scores[supplier] = 100
-                methods[supplier] = "Exact cleaned match"
-                reason_codes[supplier] = "EXACT_CLEANED_NAME"
+                methods[supplier] = "Exact core-name match"
+                reason_codes[supplier] = "EXACT_CORE_NAME"
         else:
-            fuzzy_candidates.append(cleaned_name)
+            fuzzy_candidates.append(core_name)
 
-    # Step 3: fuzzy matching among unresolved cleaned names
-    assigned_cleaned_names = set()
+    assigned_core_names = set()
 
-    for cleaned_name in fuzzy_candidates:
-        if cleaned_name in assigned_cleaned_names:
+    for core_name in fuzzy_candidates:
+        if core_name in assigned_core_names:
             continue
 
         matches = process.extract(
-            cleaned_name,
+            core_name,
             fuzzy_candidates,
             scorer=fuzz.token_set_ratio,
             score_cutoff=threshold,
             limit=None,
         )
 
-        matched_cleaned_names = [match[0] for match in matches]
+        matched_core_names = [match[0] for match in matches]
         matched_scores = [match[1] for match in matches]
 
-        for matched_name in matched_cleaned_names:
-            assigned_cleaned_names.add(matched_name)
+        for matched_name in matched_core_names:
+            assigned_core_names.add(matched_name)
 
         original_group = []
 
-        for matched_name in matched_cleaned_names:
-            original_group.extend(cleaned_to_originals[matched_name])
+        for matched_name in matched_core_names:
+            original_group.extend(core_to_originals[matched_name])
 
         canonical = choose_canonical_name(original_group, spend_lookup)
 
@@ -598,8 +951,8 @@ def normalize_suppliers(
             scores[supplier] = avg_score
 
             if len(original_group) > 1:
-                methods[supplier] = "Fuzzy match"
-                reason_codes[supplier] = "FUZZY_NAME_MATCH"
+                methods[supplier] = "Fuzzy core-name match"
+                reason_codes[supplier] = "FUZZY_CORE_NAME_MATCH"
             else:
                 methods[supplier] = "No duplicate found"
                 reason_codes[supplier] = "STANDALONE_SUPPLIER"
@@ -622,11 +975,12 @@ def normalize_suppliers(
         axis=1,
     )
 
-    # Group-level summary
     group_rows = []
 
     for normalized_name, group_df in data.groupby("normalized_supplier_name", dropna=False):
         variants = sorted(group_df["original_supplier_name"].dropna().astype(str).unique())
+        core_names = sorted(group_df["core_supplier_name"].dropna().astype(str).unique())
+
         total_spend = group_df["spend_value"].sum()
         avg_score = group_df["match_score"].mean()
 
@@ -647,6 +1001,8 @@ def normalize_suppliers(
             group_method = "Standalone"
         elif "Known alias" in group_df["match_method"].values:
             group_method = "Known alias"
+        elif "Canonical library match" in group_df["match_method"].values:
+            group_method = "Canonical library match"
         else:
             group_method = "Fuzzy match"
 
@@ -673,6 +1029,7 @@ def normalize_suppliers(
                 "match_group_id": f"MG-{len(group_rows) + 1:04d}",
                 "normalized_supplier_name": normalized_name,
                 "original_supplier_variants": ", ".join(variants),
+                "core_supplier_names_detected": ", ".join(core_names),
                 "variant_count": len(variants),
                 "total_spend": total_spend,
                 "average_match_score": round(avg_score, 1),
@@ -816,21 +1173,17 @@ def main():
     st.markdown(
         """
         <div class="hero-card">
-            <div class="hero-label">Sid's AI Portfolio - Procurement Data Quality Accelerator</div>
+            <div class="hero-label">Procurement Data Quality Accelerator</div>
             <div class="hero-title">Supplier Normalization & Duplicate Detection Workbench</div>
             <div class="hero-subtitle">
-                Upload messy supplier data, detect duplicate vendor records, normalize supplier families,
-                generate a human review queue, build golden record recommendations, and export cleaner supplier
-                data for downstream spend analytics.
+                Upload messy supplier data, extract core supplier identities, detect duplicate vendor records,
+                normalize supplier families, generate a human review queue, build golden record recommendations,
+                and export cleaner supplier data for downstream spend analytics.
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    # ========================================================
-    # SIDEBAR: INPUT
-    # ========================================================
 
     st.sidebar.header("Data Input")
 
@@ -861,10 +1214,6 @@ def main():
     if raw_df is None or raw_df.empty:
         st.warning("No data available.")
         return
-
-    # ========================================================
-    # SIDEBAR: COLUMN MAPPING
-    # ========================================================
 
     st.sidebar.header("Column Mapping")
 
@@ -904,39 +1253,46 @@ def main():
     )
     country_col = None if country_col == "None" else country_col
 
-    # ========================================================
-    # SIDEBAR: MATCH SETTINGS
-    # ========================================================
-
     st.sidebar.header("Matching Settings")
 
     matching_mode = st.sidebar.radio(
         "Matching mode",
         ["Conservative", "Balanced", "Aggressive"],
-        index=1,
+        index=2,
     )
 
-    default_thresholds = {
+    fuzzy_thresholds = {
+        "Conservative": 90,
+        "Balanced": 84,
+        "Aggressive": 78,
+    }
+
+    canonical_thresholds = {
         "Conservative": 92,
         "Balanced": 88,
-        "Aggressive": 82,
+        "Aggressive": 84,
     }
 
     threshold = st.sidebar.slider(
         "Fuzzy matching threshold",
+        min_value=70,
+        max_value=98,
+        value=fuzzy_thresholds[matching_mode],
+        step=1,
+    )
+
+    canonical_threshold = st.sidebar.slider(
+        "Canonical library threshold",
         min_value=75,
         max_value=98,
-        value=default_thresholds[matching_mode],
+        value=canonical_thresholds[matching_mode],
         step=1,
     )
 
     st.sidebar.caption(
-        "Higher threshold reduces false positives. Lower threshold finds more possible duplicates but increases review burden."
+        "Lower thresholds group more supplier variants but may increase false positives. "
+        "For messy ERP test data, start with Aggressive mode."
     )
-
-    # ========================================================
-    # RUN DIAGNOSTIC
-    # ========================================================
 
     normalized_data, group_summary = normalize_suppliers(
         raw_df,
@@ -945,6 +1301,7 @@ def main():
         category_col=category_col,
         country_col=country_col,
         threshold=threshold,
+        canonical_threshold=canonical_threshold,
     )
 
     golden_records = build_golden_records(normalized_data)
@@ -967,10 +1324,6 @@ def main():
     if not group_summary.empty:
         spend_affected = group_summary[group_summary["variant_count"] > 1]["total_spend"].sum()
 
-    # ========================================================
-    # TABS
-    # ========================================================
-
     tab1, tab2, tab3 = st.tabs(
         [
             "Executive Summary",
@@ -978,10 +1331,6 @@ def main():
             "Output & Methodology",
         ]
     )
-
-    # ========================================================
-    # TAB 1: EXECUTIVE SUMMARY
-    # ========================================================
 
     with tab1:
         st.subheader("Executive Data Quality Summary")
@@ -1039,7 +1388,7 @@ def main():
                 {
                     "view": "Normalized supplier families",
                     "supplier_count": after_supplier_count,
-                    "interpretation": "Supplier families after alias matching, cleaning, and fuzzy grouping.",
+                    "interpretation": "Supplier families after alias matching, core-name extraction, canonical library matching, and fuzzy grouping.",
                 },
             ]
         )
@@ -1089,40 +1438,8 @@ def main():
             hide_index=True,
         )
 
-        st.markdown("### Executive Takeaway")
-
-        if duplicate_groups > 0:
-            st.markdown(
-                f"""
-                The supplier file has a meaningful normalization opportunity. The tool detected **{duplicate_groups}**
-                potential duplicate supplier groups and **{review_groups}** groups requiring manual review.
-                Cleaning these records can improve supplier visibility, spend concentration analysis, category strategy,
-                and downstream sourcing opportunity identification.
-                """
-            )
-        else:
-            st.markdown(
-                """
-                The supplier file appears relatively clean from a duplicate-name perspective based on the current
-                matching threshold. Consider lowering the threshold or using aggressive mode if the goal is broader
-                duplicate discovery.
-                """
-            )
-
-    # ========================================================
-    # TAB 2: MATCH REVIEW
-    # ========================================================
-
     with tab2:
         st.subheader("Supplier Match Review")
-
-        st.markdown(
-            """
-            This section shows proposed supplier-family groupings, highlights records requiring human review,
-            explains why records were grouped, and recommends golden supplier records. Groups marked as
-            **Needs Review** should not be automatically merged without validation.
-            """
-        )
 
         review_queue = group_summary[
             (group_summary["review_status"] == "Needs Review")
@@ -1151,6 +1468,7 @@ def main():
                 "match_group_id",
                 "normalized_supplier_name",
                 "original_supplier_variants",
+                "core_supplier_names_detected",
                 "variant_count",
                 "total_spend",
                 "average_match_score",
@@ -1168,21 +1486,33 @@ def main():
 
             st.caption("Select a row below to view the match explanation.")
 
-            selected_event = st.dataframe(
-                clean_display_columns(display_match_groups),
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                key="match_group_selection",
-            )
+            try:
+                selected_event = st.dataframe(
+                    clean_display_columns(display_match_groups),
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="match_group_selection",
+                )
 
-            selected_rows = selected_event.selection.rows
+                selected_rows = selected_event.selection.rows
 
-            if selected_rows:
-                selected_position = selected_rows[0]
-            else:
+                if selected_rows:
+                    selected_position = selected_rows[0]
+                else:
+                    selected_position = 0
+
+            except TypeError:
+                st.dataframe(
+                    clean_display_columns(display_match_groups),
+                    use_container_width=True,
+                    hide_index=True,
+                )
                 selected_position = 0
+                st.caption(
+                    "Interactive row selection requires Streamlit 1.35+. Showing the first match group explanation."
+                )
 
             selected_row = match_groups_only.iloc[selected_position]
 
@@ -1193,6 +1523,7 @@ def main():
                 <div class="info-card">
                     <strong>Normalized Supplier Family:</strong> {selected_row["normalized_supplier_name"]}<br><br>
                     <strong>Supplier Variants:</strong> {selected_row["original_supplier_variants"]}<br><br>
+                    <strong>Core Supplier Names Detected:</strong> {selected_row["core_supplier_names_detected"]}<br><br>
                     <strong>Average Match Score:</strong> {selected_row["average_match_score"]}<br><br>
                     <strong>Confidence Tier:</strong> {selected_row["confidence_tier"]}<br><br>
                     <strong>Recommended Action:</strong> {selected_row["recommended_action"]}<br><br>
@@ -1232,20 +1563,8 @@ def main():
             hide_index=True,
         )
 
-    # ========================================================
-    # TAB 3: OUTPUT & METHODOLOGY
-    # ========================================================
-
     with tab3:
         st.subheader("Output & Methodology")
-
-        st.markdown(
-            """
-            This section provides the normalized supplier-level output, export files, and methodology notes.
-            The normalized output can be used as a cleaner supplier master input for downstream spend analytics,
-            sourcing opportunity analysis, or vendor-master cleanup review.
-            """
-        )
 
         st.markdown("### Download Outputs")
 
@@ -1278,13 +1597,6 @@ def main():
 
         st.markdown("### Normalized Supplier-Level Data")
 
-        st.markdown(
-            """
-            This is the row-level output with original supplier names, cleaned supplier names,
-            normalized supplier names, match confidence, reason codes, and supporting fields.
-            """
-        )
-
         display_normalized = normalized_data.copy()
 
         if "spend_value" in display_normalized.columns:
@@ -1301,14 +1613,14 @@ def main():
         st.markdown(
             """
             1. Supplier names are normalized using unicode cleanup, lowercasing, whitespace cleanup, punctuation removal, legal suffix removal, abbreviation expansion, and ERP metadata stripping.
-            2. Known aliases are applied first for common supplier families such as AWS, IBM, Microsoft, DHL, FedEx, and others.
-            3. Exact cleaned-name matches are grouped before fuzzy matching.
-            4. Remaining supplier names are grouped using RapidFuzz fuzzy matching.
-            5. Standalone suppliers are separated from duplicate groups and are not treated as confirmed duplicates.
-            6. Match confidence is translated into business-readable tiers: Confirmed Duplicate, Probable Duplicate, Possible Duplicate, Not a Match, and Standalone Supplier.
-            7. Groups with lower confidence, category conflicts, country conflicts, or high false-positive risk are routed to the human review queue.
-            8. Each duplicate match group includes a deterministic explanation showing why the supplier variants were grouped.
-            9. Golden records are recommended using normalized supplier family names and simple survivorship logic.
+            2. The tool extracts a core supplier identity by removing transaction IDs, store numbers, payment terms, location noise, region labels, and ERP-process words.
+            3. Known aliases are applied first for common supplier families and high-confidence abbreviations.
+            4. Supplier names are then matched against a canonical supplier library.
+            5. A generic-token guardrail prevents weak matches where the only shared words are generic business terms such as consulting, services, group, company, industries, technologies, international, or express.
+            6. Exact core-name matches are grouped before fuzzy matching.
+            7. Remaining supplier names are grouped using RapidFuzz fuzzy matching on extracted core supplier names.
+            8. Standalone suppliers are separated from duplicate groups and are not treated as confirmed duplicates.
+            9. Each duplicate match group includes a deterministic explanation showing why the supplier variants were grouped.
             """
         )
 
@@ -1317,10 +1629,11 @@ def main():
         st.markdown(
             """
             - This tool does not verify legal entities against external databases.
+            - The built-in canonical supplier library is intentionally limited and should be expanded for production use.
+            - Acronym aliases can be powerful but risky; very short aliases should be curated carefully.
             - Fuzzy matching is directional and requires human review before ERP/vendor-master updates.
             - Parent-company and corporate hierarchy mapping are not included in this MVP.
             - Tax ID, address, domain, LEI, and D-U-N-S matching can be added in a future version.
-            - Supplier consolidation decisions should be validated with contracts, business owners, tax/legal data, and category strategy.
             """
         )
 
